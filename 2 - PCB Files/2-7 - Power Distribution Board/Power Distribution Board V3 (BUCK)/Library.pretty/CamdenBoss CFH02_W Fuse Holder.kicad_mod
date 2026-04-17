@@ -1,0 +1,97 @@
+(footprint "CamdenBoss CFH02_W Fuse Holder"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(property "Reference" "REF**"
+		(at 0.67 -3.63 0)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(uuid "d7753052-5285-4825-9414-994be19dd1b5")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.1)
+			)
+		)
+	)
+	(property "Value" "CamdenBoss CFH02/W Fuse Holder"
+		(at 11.18 2.86 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "3720bf99-41f5-4693-9a36-d1191b35377c")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "49858f5c-f1e5-40cd-b6d8-1332a0277a1f")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "7721c607-77b5-481a-a74c-87a83680b3ac")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_rect
+		(start -1.5 -4.5)
+		(end 23.5 4.5)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "c29cb96c-f332-4456-b4df-8aa27afd87d2")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 10.93 -2.57 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "07b76723-d557-468e-b6b7-e24edd426ff2")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "1" thru_hole circle
+		(at 0 0)
+		(size 2.6 2.6)
+		(drill 1.3)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "95a8c897-e2d3-4798-851b-dd9c23e99578")
+	)
+	(pad "2" thru_hole circle
+		(at 22 0)
+		(size 2.6 2.6)
+		(drill 1.3)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "5609baea-d0f5-47ab-9152-adb4da4aead1")
+	)
+	(embedded_fonts no)
+)

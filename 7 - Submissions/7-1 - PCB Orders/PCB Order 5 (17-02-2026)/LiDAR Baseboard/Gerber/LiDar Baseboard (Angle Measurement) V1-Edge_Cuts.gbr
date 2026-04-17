@@ -1,0 +1,23 @@
+%TF.GenerationSoftware,KiCad,Pcbnew,9.0.4*%
+%TF.CreationDate,2026-02-17T13:46:37+00:00*%
+%TF.ProjectId,LiDar Baseboard (Angle Measurement) V1,4c694461-7220-4426-9173-65626f617264,rev?*%
+%TF.SameCoordinates,Original*%
+%TF.FileFunction,Profile,NP*%
+%FSLAX46Y46*%
+G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
+G04 Created by KiCad (PCBNEW 9.0.4) date 2026-02-17 13:46:37*
+%MOMM*%
+%LPD*%
+G01*
+G04 APERTURE LIST*
+%TA.AperFunction,Profile*%
+%ADD10C,0.200000*%
+%TD*%
+G04 APERTURE END LIST*
+D10*
+X17500000Y-32500000D02*
+X67500000Y-32500000D01*
+X67500000Y-71000000D01*
+X17500000Y-71000000D01*
+X17500000Y-32500000D01*
+M02*

@@ -1,0 +1,657 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  TMF8806 dToF Sensor Driver  ·  FRDM-KL25Z  ·  PlatformIO / Mbed OS 6
+ * ───────────────────────────────────────────────────────────────────────────
+ *  Schematic (from TMF8806-1AM_OLGA12 breakout):
+ *    SDA    ──  PTC2          SCL    ──  PTC1
+ *    EN     ──  PTB3          VDD/GND    3V3 / GND
+ *
+ *  Outputs:
+ *    On-board RGB  PTB18(R) / PTB19(G) / PTD1(B)  -- active-LOW
+ *    Variable-freq PWM  PTE5  50% duty, 200 Hz to 5 kHz  (varies with distance)
+ *
+ *  Measurement:
+ *    200 meas / min  ->  300 ms period
+ *    5 m long-range mode  ->  spad_map_id = 6, kilo_iter = 4000
+ *
+ *  Colour map:
+ *    0  -  500 mm  Red    (very close)
+ *    500 - 1500 mm Orange/Yellow
+ *    1500- 3000 mm Green
+ *    3000- 5000 mm Blue   (far)
+ *
+ *  platformio.ini:
+ *    [env:frdm_kl25z]
+ *    platform  = freescale-kinetis
+ *    board     = frdm_kl25z
+ *    framework = mbed
+ * ============================================================================ */
+
+#include "mbed.h"
+#include <cstdio>
+#include <cstring>
+#include <cstdarg>
+
+// -- I2C  (Mbed constructor: SDA first, then SCL) ----------------------------
+I2C i2c(PTC2, PTC1);               // SDA = PTC2 / SCL = PTC1  (I2C1 on KL25Z)
+
+// -- TMF8806 chip enable (active-HIGH) ---------------------------------------
+DigitalOut en_tof(PTB3, 0);        // start deasserted
+
+// -- On-board RGB LED  --  common-anode, so write(0) = full ON ---------------
+PwmOut led_r(PTB18);               // TPM2_CH0
+PwmOut led_g(PTB19);               // TPM2_CH1
+PwmOut led_b(PTD1);                // TPM0_CH1
+
+// -- Variable-frequency PWM output -------------------------------------------
+PwmOut pwm_out(PTE5);              // TPM3_CH0
+
+// -- Debug UART (OpenSDA on KL25Z) -------------------------------------------
+static BufferedSerial pc(USBTX, USBRX, 115200);
+
+// ============================================================================
+//  Serial logging helpers
+//
+//  print_line(s)      -- send a plain C-string verbatim (no heap allocation)
+//  log_fmt(fmt, ...)  -- printf-style into a fixed 128-byte stack buffer
+//
+//  Every tagged helper (log_info / log_ok / log_warn / log_error / log_debug)
+//  routes through print_line so there is a single write site; easy to silence
+//  a whole category at compile time by making the body a no-op.
+// ============================================================================
+
+static void print_line(const char *s)
+{
+    pc.write(s, strlen(s));
+}
+
+/** Printf-style helper.  Truncates at 127 chars; no heap used. */
+static void log_fmt(const char *fmt, ...)
+{
+    char buf[128];
+    va_list args;
+    va_start(args, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    if (n > 0) {
+        pc.write(buf, (n < (int)sizeof(buf)) ? n : (int)sizeof(buf) - 1);
+    }
+}
+
+/** Informational message -- normal operational status. */
+static void log_info(const char *s)
+{
+    print_line("[INFO ] ");
+    print_line(s);
+    print_line("\r\n");
+}
+
+/** Success / confirmation message. */
+static void log_ok(const char *s)
+{
+    print_line("[OK   ] ");
+    print_line(s);
+    print_line("\r\n");
+}
+
+/** Non-fatal warning -- operation continues but something is abnormal. */
+static void log_warn(const char *s)
+{
+    print_line("[WARN ] ");
+    print_line(s);
+    print_line("\r\n");
+}
+
+/** Recoverable or fatal error. */
+static void log_error(const char *s)
+{
+    print_line("[ERROR] ");
+    print_line(s);
+    print_line("\r\n");
+}
+
+/** Verbose diagnostic -- register values, I2C ACK codes, etc. */
+static void log_debug(const char *s)
+{
+    print_line("[DEBUG] ");
+    print_line(s);
+    print_line("\r\n");
+}
+
+// ============================================================================
+//  TMF8806  REGISTER / COMMAND MAP   (AMS DS000597)
+// ============================================================================
+namespace TMF {
+
+    static constexpr uint8_t ADDR = 0x41 << 1;     // 8-bit Mbed I2C address
+
+    // -- Application IDs (register 0x00) -------------------------------------
+    static constexpr uint8_t R_APPID        = 0x00;
+    static constexpr uint8_t APPID_BL       = 0x80; // bootloader active
+    static constexpr uint8_t APPID_MEAS     = 0x03; // measurement app active
+
+    // -- Command / status (register 0x08) ------------------------------------
+    static constexpr uint8_t R_CMD_STAT     = 0x08;
+    static constexpr uint8_t CMD_LOAD_APP   = 0x14; // boot ROM -> measurement app
+    static constexpr uint8_t CMD_MEASURE    = 0x02; // start continuous measurement
+    static constexpr uint8_t CMD_STOP       = 0xFF; // stop / soft-reset
+    static constexpr uint8_t STAT_OK        = 0x0F; // command accepted OK
+
+    // -- Measurement configuration block start (section 6.4) ----------------
+    //  Written as a contiguous burst before CMD_MEASURE:
+    //   Offset  Register  Field
+    //     0     0x10      capture_mode    uint8
+    //     1     0x11      algo_state      uint8
+    //     2     0x12      gpio_setting    uint8
+    //     3     0x13      dax_mode        uint8
+    //     4     0x14      spad_map_id     uint8
+    //     5-6   0x15-16   kilo_iterations uint16-LE
+    //     7-8   0x17-18   period_ms       uint16-LE
+    static constexpr uint8_t R_MEAS_CFG    = 0x10;
+
+    // -- Result block start (section 6.6) ------------------------------------
+    //   Offset  Register  Field
+    //     0     0x1C      result_number   uint8   (increments each result)
+    //     1     0x1D      result_info     uint8   (reliability bits [6:4])
+    //     2-3   0x1E-1F   dist_peak_0     uint16-LE  (mm)
+    //     4     0x20      confidence_0    uint8   (0-255)
+    //     5-6   0x21-22   dist_peak_1     uint16-LE  (mm, optional 2nd target)
+    //     7     0x23      confidence_1    uint8
+    static constexpr uint8_t R_RESULT         = 0x1C;
+    static constexpr uint8_t RESULT_BLOCK_LEN = 8;
+
+} // namespace TMF
+
+// ============================================================================
+//  Measurement configuration constants
+// ============================================================================
+static constexpr uint16_t MEAS_PERIOD_MS  = 300;     // 200 meas/min -> 300 ms
+static constexpr uint16_t KILO_ITER_5M    = 4000;    // high SNR -> >=5 m range
+static constexpr uint8_t  SPAD_MAP_5M     = 0x06;    // narrow-beam SPAD (long range)
+
+static constexpr float    DIST_MAX_MM     = 5000.0f;
+static constexpr float    PWM_FREQ_CLOSE  = 5000.0f; // 0 mm    -> 5 kHz
+static constexpr float    PWM_FREQ_FAR    =  200.0f; // 5000 mm -> 200 Hz
+static constexpr uint8_t  MIN_CONFIDENCE  = 30;      // discard results below this
+
+// ============================================================================
+//  I2C helper functions
+// ============================================================================
+
+/** Write a single 8-bit register.  Returns true on ACK. */
+static bool writeReg(uint8_t reg, uint8_t val)
+{
+    char buf[2] = { (char)reg, (char)val };
+    int  ack    = i2c.write(TMF::ADDR, buf, 2);
+    if (ack != 0) {
+        log_fmt("[ERROR] I2C write NACK: reg=0x%02X val=0x%02X  (ack=%d)\r\n",
+                reg, val, ack);
+        return false;
+    }
+    return true;
+}
+
+/** Read a single 8-bit register. */
+static uint8_t readReg(uint8_t reg)
+{
+    char r = (char)reg;
+    char v = 0;
+    int  wr = i2c.write(TMF::ADDR, &r, 1, true);   // repeated start, no STOP
+    int  rd = i2c.read (TMF::ADDR, &v, 1);
+    if (wr != 0 || rd != 0) {
+        log_fmt("[ERROR] I2C readReg NACK: reg=0x%02X  (wr=%d rd=%d)\r\n",
+                reg, wr, rd);
+    }
+    return (uint8_t)v;
+}
+
+/** Read a contiguous block of registers.  Returns false on bus error. */
+static bool readBlock(uint8_t reg, uint8_t *dst, int len)
+{
+    char r  = (char)reg;
+    int  wr = i2c.write(TMF::ADDR, &r, 1, true);
+    int  rd = i2c.read (TMF::ADDR, (char*)dst, len);
+    if (wr != 0 || rd != 0) {
+        log_fmt("[ERROR] I2C readBlock NACK: reg=0x%02X len=%d  (wr=%d rd=%d)\r\n",
+                reg, len, wr, rd);
+        return false;
+    }
+    return true;
+}
+
+// ============================================================================
+//  TMF8806 -- power-on and application boot
+// ============================================================================
+static bool tmf_init()
+{
+    // 1. Assert ENABLE pin -- chip powers up and starts bootloader
+    log_debug("Asserting EN_TOF high (PTB3 = 1)");
+    en_tof = 1;
+    ThisThread::sleep_for(2ms);         // datasheet: >=1.6 ms boot time
+
+    // 2. Read APPID -- must be 0x80 (bootloader) or 0x03 (warm reset)
+    uint8_t appid = readReg(TMF::R_APPID);
+    log_fmt("[DEBUG] APPID = 0x%02X  (0x80 = bootloader, 0x03 = meas app)\r\n",
+            appid);
+
+    if (appid == TMF::APPID_MEAS) {
+        log_ok("Measurement app already running (warm-reset path, skipping load)");
+        return true;
+    }
+
+    if (appid != TMF::APPID_BL) {
+        log_fmt("[ERROR] Unexpected APPID 0x%02X -- possible I2C wiring issue "
+                "or missing pull-ups on SDA/SCL\r\n", appid);
+        return false;
+    }
+
+    log_ok("Bootloader detected (0x80) -- requesting measurement app load");
+
+    // 3. Send CMD_LOAD_APP to transfer control to the ROM measurement app
+    if (!writeReg(TMF::R_CMD_STAT, TMF::CMD_LOAD_APP)) {
+        log_error("CMD_LOAD_APP (0x14) write failed -- check SDA/SCL lines");
+        return false;
+    }
+    log_debug("CMD_LOAD_APP sent, waiting 5 ms for ROM app to initialise");
+    ThisThread::sleep_for(5ms);
+
+    // 4. Confirm measurement app is now active
+    appid = readReg(TMF::R_APPID);
+    log_fmt("[DEBUG] Post-load APPID = 0x%02X  (want 0x03)\r\n", appid);
+
+    if (appid != TMF::APPID_MEAS) {
+        log_fmt("[ERROR] App load failed: APPID = 0x%02X, expected 0x03. "
+                "Sensor may need a power cycle.\r\n", appid);
+        return false;
+    }
+
+    log_ok("Measurement application loaded and confirmed (APPID = 0x03)");
+    return true;
+}
+
+// ============================================================================
+//  TMF8806 -- write measurement configuration and start continuous ranging
+// ============================================================================
+static bool tmf_startMeasurement()
+{
+    // Contiguous config burst written to registers 0x10-0x18 (DS000597 sect. 6.4)
+    const uint8_t cfg[] = {
+        TMF::R_MEAS_CFG,                              // register pointer
+
+        0x00,                                         // capture_mode  : 0 = standard dToF
+        0x00,                                         // algo_state    : 0 = default
+        0x00,                                         // gpio_setting  : 0 = unused
+        0x00,                                         // dax_mode      : 0 = standard
+        SPAD_MAP_5M,                                  // spad_map_id   : 6 = narrow-beam 5 m
+
+        (uint8_t)(KILO_ITER_5M & 0xFF),               // kilo_iter LSB
+        (uint8_t)(KILO_ITER_5M >> 8),                 // kilo_iter MSB
+
+        (uint8_t)(MEAS_PERIOD_MS & 0xFF),             // period_ms LSB
+        (uint8_t)(MEAS_PERIOD_MS >> 8),               // period_ms MSB
+    };
+
+    log_fmt("[INFO ] Writing measurement config to 0x%02X-0x%02X:\r\n",
+            TMF::R_MEAS_CFG, TMF::R_MEAS_CFG + 8);
+    log_fmt("[INFO ]   spad_map_id  = 0x%02X  (5 m narrow-beam FOV)\r\n",
+            SPAD_MAP_5M);
+    log_fmt("[INFO ]   kilo_iter    = %u       (SNR tuned for 5 m range)\r\n",
+            KILO_ITER_5M);
+    log_fmt("[INFO ]   period_ms    = %u ms    (~%u measurements/min)\r\n",
+            MEAS_PERIOD_MS, 60000u / MEAS_PERIOD_MS);
+
+    int ack = i2c.write(TMF::ADDR, (const char*)cfg, sizeof(cfg));
+    if (ack != 0) {
+        log_fmt("[ERROR] Config burst write NACK (ack=%d) -- "
+                "sensor not responding on I2C\r\n", ack);
+        return false;
+    }
+    log_debug("Config burst written to 0x10-0x18 OK");
+
+    // Issue CMD_MEASURE -- sensor begins continuous ranging immediately
+    if (!writeReg(TMF::R_CMD_STAT, TMF::CMD_MEASURE)) {
+        log_error("CMD_MEASURE (0x02) write failed");
+        return false;
+    }
+    log_debug("CMD_MEASURE (0x02) sent -- waiting 5 ms for STAT_OK");
+    ThisThread::sleep_for(5ms);
+
+    // Verify the command was accepted
+    uint8_t stat = readReg(TMF::R_CMD_STAT);
+    log_fmt("[DEBUG] CMD_STAT after CMD_MEASURE = 0x%02X  (want 0x%02X = STAT_OK)\r\n",
+            stat, TMF::STAT_OK);
+
+    if (stat != TMF::STAT_OK) {
+        log_fmt("[ERROR] CMD_MEASURE rejected: STAT = 0x%02X, expected 0x%02X\r\n",
+                stat, TMF::STAT_OK);
+        log_error("Possible cause: invalid spad_map_id or kilo_iter out of range");
+        return false;
+    }
+
+    log_ok("Continuous measurement started -- STAT_OK received");
+    return true;
+}
+
+// ============================================================================
+//  TMF8806 -- read one distance result from the result block
+// ============================================================================
+struct TofResult {
+    uint16_t dist_mm;       // primary target distance
+    uint8_t  confidence;    // confidence 0-255 (>=30 = valid)
+    uint8_t  result_num;    // increments with each new measurement
+    uint8_t  result_info;   // raw info byte (reliability [6:4], targets [3:0])
+    bool     valid;         // true when confidence and distance are in range
+    bool     i2c_ok;        // false if the bus transaction itself failed
+};
+
+static TofResult tmf_read()
+{
+    uint8_t buf[TMF::RESULT_BLOCK_LEN] = {};
+    bool ok = readBlock(TMF::R_RESULT, buf, TMF::RESULT_BLOCK_LEN);
+
+    TofResult r{};
+    r.i2c_ok     = ok;
+    r.result_num = buf[0];
+    r.result_info= buf[1];
+    r.dist_mm    = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+    r.confidence = buf[4];
+    r.valid      = ok
+                && (r.confidence >= MIN_CONFIDENCE)
+                && (r.dist_mm > 0)
+                && (r.dist_mm <= (uint16_t)DIST_MAX_MM);
+    return r;
+}
+
+// ============================================================================
+//  RGB LED helpers  (active-LOW: write(0.0) = full ON, write(1.0) = off)
+// ============================================================================
+static inline float clamp01(float v)
+{
+    return (v < 0.0f) ? 0.0f : (v > 1.0f ? 1.0f : v);
+}
+
+static void rgb_set(float r, float g, float b)
+{
+    led_r.write(1.0f - clamp01(r));
+    led_g.write(1.0f - clamp01(g));
+    led_b.write(1.0f - clamp01(b));
+}
+
+// Map distance (0-5000 mm) to a smooth colour gradient:
+//   0-500 mm     Red
+//   500-1500 mm  Red -> Yellow
+//   1500-3000 mm Yellow -> Green
+//   3000-5000 mm Green -> Blue
+static void updateLED(uint16_t dist_mm)
+{
+    float d = (float)dist_mm;
+    float r = 0.0f, g = 0.0f, b = 0.0f;
+
+    if (d < 500.0f) {
+        r = 1.0f;
+    } else if (d < 1500.0f) {
+        float t = (d - 500.0f) / 1000.0f;
+        r = 1.0f; g = t;
+    } else if (d < 3000.0f) {
+        float t = (d - 1500.0f) / 1500.0f;
+        r = 1.0f - t; g = 1.0f;
+    } else {
+        float t = (d - 3000.0f) / 2000.0f;
+        g = 1.0f - t; b = t;
+    }
+    rgb_set(r, g, b);
+}
+
+// ============================================================================
+//  PWM frequency output  (50% duty, frequency varies with distance)
+//  Near (0 mm)    -> 5000 Hz
+//  Far (5000 mm)  ->  200 Hz
+// ============================================================================
+static float updatePWM(uint16_t dist_mm)
+{
+    float norm = clamp01((float)dist_mm / DIST_MAX_MM);
+    float freq = PWM_FREQ_CLOSE + norm * (PWM_FREQ_FAR - PWM_FREQ_CLOSE);
+    pwm_out.period(1.0f / freq);
+    pwm_out.write(0.5f);
+    return freq;
+}
+
+// Human-readable zone label for the serial table column
+static const char *zone_label(uint16_t dist_mm)
+{
+    if (dist_mm <  500) return "CLOSE  <0.5m  [RED   ]";
+    if (dist_mm < 1500) return "NEAR   0.5-1.5m [YELLOW]";
+    if (dist_mm < 3000) return "MID    1.5-3.0m [GREEN ]";
+    return                     "FAR    3.0-5.0m [BLUE  ]";
+}
+
+// ============================================================================
+//  main
+// ============================================================================
+int main()
+{
+    // -- Configure LED PWM carrier (5 ms period = 200 Hz, smooth dimming) ---
+    led_r.period_ms(5);
+    led_g.period_ms(5);
+    led_b.period_ms(5);
+    rgb_set(0.0f, 0.0f, 0.0f);     // all off at startup
+
+    // -- I2C bus speed -------------------------------------------------------
+    i2c.frequency(400000);          // 400 kHz Fast-mode
+
+    // -- Initial PWM state (5 kHz until first valid reading) ----------------
+    pwm_out.period_us(200);
+    pwm_out.write(0.5f);
+
+    // ========================================================================
+    //  Startup banner
+    // ========================================================================
+    print_line("\r\n");
+    print_line("+==============================================+\r\n");
+    print_line("|   TMF8806 dToF  /  FRDM-KL25Z  /  Mbed OS  |\r\n");
+    print_line("|----------------------------------------------|\r\n");
+    print_line("|  SDA  PTC2    SCL  PTC1    EN   PTB3        |\r\n");
+    print_line("|  PWM  PTE5    RGB  PTB18 / PTB19 / PTD1     |\r\n");
+    print_line("|  Mode : 5 m long-range                      |\r\n");
+    print_line("|  Rate : 200 measurements / min (300 ms)     |\r\n");
+    print_line("|  I2C  : 400 kHz Fast-mode                   |\r\n");
+    print_line("+==============================================+\r\n");
+    print_line("\r\n");
+
+    // ========================================================================
+    //  Boot sequence -- retry until sensor responds (up to 10 attempts)
+    // ========================================================================
+    log_info("Starting TMF8806 initialisation...");
+
+    int boot_attempts = 0;
+    while (!tmf_init()) {
+        boot_attempts++;
+        log_fmt("[ERROR] Init attempt %d failed -- power-cycling EN_TOF and retrying\r\n",
+                boot_attempts);
+
+        rgb_set(1.0f, 0.0f, 0.0f);     // RED blink = boot failure
+        ThisThread::sleep_for(250ms);
+        rgb_set(0.0f, 0.0f, 0.0f);
+
+        en_tof = 0;                     // deassert EN to power-cycle the chip
+        ThisThread::sleep_for(10ms);
+
+        if (boot_attempts >= 10) {
+            log_error("10 consecutive init failures.");
+            log_error("Check: EN_TOF wiring (PTB3), SDA (PTC2), SCL (PTC1),");
+            log_error("       3V3 supply, and I2C pull-up resistors.");
+            log_error("Halting -- LED will blink MAGENTA.");
+            while (true) {
+                rgb_set(1.0f, 0.0f, 1.0f);
+                ThisThread::sleep_for(200ms);
+                rgb_set(0.0f, 0.0f, 0.0f);
+                ThisThread::sleep_for(200ms);
+            }
+        }
+    }
+
+    log_fmt("[OK   ] TMF8806 booted after %d attempt(s)\r\n", boot_attempts + 1);
+
+    // ========================================================================
+    //  Start continuous 5 m measurement
+    // ========================================================================
+    log_info("Configuring 5 m long-range measurement mode...");
+
+    if (!tmf_startMeasurement()) {
+        log_error("tmf_startMeasurement() failed.");
+        log_error("Check sensor firmware and register-map version (DS000597).");
+        log_error("Halting -- LED will blink MAGENTA.");
+        while (true) {
+            rgb_set(1.0f, 0.0f, 1.0f);
+            ThisThread::sleep_for(500ms);
+            rgb_set(0.0f, 0.0f, 0.0f);
+            ThisThread::sleep_for(500ms);
+        }
+    }
+
+    // -- Ready summary -------------------------------------------------------
+    print_line("\r\n");
+    print_line("+----------------------------------------------+\r\n");
+    log_ok  ("Sensor ready -- entering measurement loop");
+    log_fmt ("[INFO ]   spad_map_id = 0x%02X  kilo_iter = %u  period = %u ms\r\n",
+             SPAD_MAP_5M, KILO_ITER_5M, MEAS_PERIOD_MS);
+    log_fmt ("[INFO ]   PWM PTE5: %.0f Hz (far) to %.0f Hz (close)  duty = 50%%\r\n",
+             PWM_FREQ_FAR, PWM_FREQ_CLOSE);
+    log_fmt ("[INFO ]   Valid threshold: confidence >= %u / 255\r\n", MIN_CONFIDENCE);
+    print_line("+----------------------------------------------+\r\n");
+    print_line("  #    | dist (mm) | conf | zone                   | PWM (Hz)\r\n");
+    print_line("-------+-----------+------+------------------------+---------\r\n");
+
+    // Brief green flash to confirm successful startup
+    rgb_set(0.0f, 1.0f, 0.0f);
+    ThisThread::sleep_for(400ms);
+    rgb_set(0.0f, 0.0f, 0.0f);
+
+    // ========================================================================
+    //  Main measurement loop  --  300 ms tick = 200 measurements per minute
+    // ========================================================================
+    uint8_t  prev_result_num  = 0xFF;   // detect stale results
+    uint16_t stale_count      = 0;
+    uint16_t i2c_error_count  = 0;
+    uint16_t low_conf_streak  = 0;
+    uint32_t sample_count     = 0;
+
+    while (true) {
+        ThisThread::sleep_for(300ms);
+
+        TofResult result = tmf_read();
+        sample_count++;
+
+        // ----------------------------------------------------------------
+        //  I2C bus failure
+        // ----------------------------------------------------------------
+        if (!result.i2c_ok) {
+            i2c_error_count++;
+            log_fmt("[ERROR] I2C bus failure on sample #%lu  "
+                    "(consecutive errors: %u)\r\n",
+                    sample_count, i2c_error_count);
+
+            if (i2c_error_count >= 5) {
+                log_warn("5 consecutive I2C errors -- sensor may have lost power.");
+                log_info("Attempting sensor re-initialisation...");
+                en_tof = 0;
+                ThisThread::sleep_for(20ms);
+                if (tmf_init() && tmf_startMeasurement()) {
+                    log_ok("Re-init successful -- resuming measurement loop");
+                    i2c_error_count = 0;
+                } else {
+                    log_error("Re-init failed -- continuing, check hardware");
+                }
+            }
+
+            rgb_set(1.0f, 0.0f, 0.0f);     // solid RED = bus error
+            pwm_out.period_us(50);          // 20 kHz = hardware fault indicator
+            pwm_out.write(0.5f);
+            continue;
+        }
+        i2c_error_count = 0;               // reset consecutive counter on success
+
+        // ----------------------------------------------------------------
+        //  Stale result detection (result_num not incrementing)
+        // ----------------------------------------------------------------
+        if (result.result_num == prev_result_num) {
+            stale_count++;
+            if (stale_count == 3) {
+                log_fmt("[WARN ] result_num stuck at 0x%02X for %u consecutive polls "
+                        "-- sensor may have stopped ranging\r\n",
+                        result.result_num, stale_count);
+                log_warn("Possible cause: measurement period mis-configured or "
+                         "CMD_MEASURE not accepted");
+            }
+        } else {
+            if (stale_count >= 3) {
+                log_fmt("[INFO ] result_num resumed incrementing "
+                        "after %u stale polls\r\n", stale_count);
+            }
+            stale_count = 0;
+        }
+        prev_result_num = result.result_num;
+
+        // ----------------------------------------------------------------
+        //  Low-confidence / invalid result
+        // ----------------------------------------------------------------
+        if (!result.valid) {
+            low_conf_streak++;
+
+            if (result.dist_mm == 0) {
+                // Zero distance likely means no target detected
+                log_fmt("[WARN ] No target detected on sample #%lu "
+                        "(dist=0, conf=%u, info=0x%02X)\r\n",
+                        sample_count, result.confidence, result.result_info);
+            } else {
+                // Target detected but confidence is too low to trust
+                log_fmt("[WARN ] Low confidence on sample #%lu: "
+                        "dist=%u mm  conf=%u/%u  info=0x%02X  streak=%u\r\n",
+                        sample_count,
+                        result.dist_mm, result.confidence, 255,
+                        result.result_info, low_conf_streak);
+
+                if (low_conf_streak == 10) {
+                    log_warn("10 consecutive low-confidence readings.");
+                    log_warn("Possible causes: target beyond 5 m, high ambient light,");
+                    log_warn("                 object outside SPAD FOV, or dirty lens.");
+                }
+            }
+
+            // Hold the last valid LED colour; set PWM to "no-reading" rate
+            pwm_out.period_us(100);         // 10 kHz = low-confidence indicator
+            pwm_out.write(0.5f);
+            continue;
+        }
+
+        low_conf_streak = 0;               // valid reading -- reset streak
+
+        // ----------------------------------------------------------------
+        //  Valid measurement -- update LED, PWM, and serial output
+        // ----------------------------------------------------------------
+        float freq = updatePWM(result.dist_mm);
+        updateLED(result.dist_mm);
+
+        // Tabular serial output aligned with the header printed above
+        log_fmt("[MEAS ] %5lu | %9u | %4u | %-24s| %.0f\r\n",
+                sample_count,
+                result.dist_mm,
+                result.confidence,
+                zone_label(result.dist_mm),
+                freq);
+
+        // ----------------------------------------------------------------
+        //  Periodic statistics summary (every 200 samples ~ 1 minute)
+        // ----------------------------------------------------------------
+        if (sample_count % 200 == 0) {
+            print_line("\r\n");
+            print_line("+-- 1-minute statistics -----------------------+\r\n");
+            log_fmt ("[STAT ] Samples    : %lu\r\n", sample_count);
+            log_fmt ("[STAT ] I2C errors : %u\r\n",  i2c_error_count);
+            log_fmt ("[STAT ] Low-conf   : %u\r\n",  low_conf_streak);
+            log_fmt ("[STAT ] Stale polls: %u\r\n",  stale_count);
+            print_line("+----------------------------------------------+\r\n");
+            print_line("  #    | dist (mm) | conf | zone                   | PWM (Hz)\r\n");
+            print_line("-------+-----------+------+------------------------+---------\r\n");
+        }
+    }
+}

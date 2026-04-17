@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "FRDM_DEV_Board")(type "KiCad")(uri "${KIPRJMOD}/FRDM_DEV_Board.kicad_sym")(options "")(descr ""))
+)

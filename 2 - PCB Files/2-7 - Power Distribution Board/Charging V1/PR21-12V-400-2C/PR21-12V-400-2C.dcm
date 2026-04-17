@@ -1,0 +1,9 @@
+EESchema-DOCLIB  Version 2.0
+#
+$CMP PR21-12V-400-2C
+D PR21-12V-400-2C - 29 x 12.6 x 15.8 mm, 12 V, 8 A, DPDT (2 Form C), Power Relay
+K
+F https://www.sameskydevices.com/product/resource/PR21-12V-400-2C.pdf
+$ENDCMP
+#
+#End Doc Library

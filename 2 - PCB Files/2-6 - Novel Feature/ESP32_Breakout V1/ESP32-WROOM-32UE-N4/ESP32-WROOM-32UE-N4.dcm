@@ -1,0 +1,9 @@
+EESchema-DOCLIB  Version 2.0
+#
+$CMP ESP32-WROOM-32UE-N4
+D WiFi Modules - 802.11 SMD module ESP32-WROOM-32UE, ESP32-D0WD-V3, ESP32 ECO V3, 4 MB SPI flash, IPEX antenna connector
+K
+F https://www.espressif.com/sites/default/files/documentation/esp32-wroom-32e_esp32-wroom-32ue_datasheet_en.pdf
+$ENDCMP
+#
+#End Doc Library

@@ -1,0 +1,16 @@
+Please Read below and credit authors.
+
+The main Assembly file is Chassis_Assem.SLDASM. The file was 'Pack and Go'ed so I hope there aren't any weird mission components.
+
+This 3D Model has been made by Saad Muhammad Aziz in reference to the ENG3049 Team Design Project EE3 rover mostly using manual measurements. Accuracy of this model is estimated to be within 1.5-3%. 
+
+The Main chassis has been made from a single part rather than the real 4 parts because has no effect on the project especially since it is not permitted to disassemble the chassis.
+
+The file named 'Wheel.SLDASM' is a model downloaded from GrabCAD, see below for the designer name and profile link. This is a free online 3D model sharing site and it is explicitly allowed to use these models for educational purposes. Review licenses for other uses.
+
+Link to model: https://grabcad.com/library/rc-monster-truck-tire-type2-125x70-mm-17mm-hex-1
+
+Designer:
+Alex Andrusevych
+Kyiv, Ukraine
+https://grabcad.com/alex.andrusevych-1/models

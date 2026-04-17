@@ -1,0 +1,484 @@
+#include "mbed.h"
+
+// --- Pin Assignments ---
+
+PwmOut LEDblue(LED_BLUE);
+PwmOut LEDred(LED_RED);
+PwmOut LEDgreen(LED_GREEN);
+
+// Right motor I/O (L298N: ENA, IN1, IN2)
+PwmOut rEn(PTE20);      
+DigitalOut rO1(PTE22);  // IN1
+DigitalOut rO2(PTE23);  // IN2
+
+// Left motor I/O (L298N: ENB, IN3, IN4)
+PwmOut lEn(PTE21);      
+DigitalOut lO1(PTE29);  // IN3
+DigitalOut lO2(PTE30);   // IN4
+
+// Line sensors (High = On Line)
+DigitalIn NlLine(PTB8); // Left
+DigitalIn CeLine(PTB9); // Center
+DigitalIn NrLine(PTB10); // Right
+
+// --- Settings ---
+float drivePower = 0.25f;  // Base speed (0.0 to 1.0)
+float turnPower = 1.0f;   // Speed during turns
+
+void initialize() {
+    lEn.period_ms(10);
+    rEn.period_ms(10);
+    // Reset LEDs (1.0 is OFF on many Mbed boards, 0.0 is OFF on others)
+    LEDblue = 1.0f; 
+    LEDred = 1.0f;
+    LEDgreen = 1.0f;
+}
+
+// --- L298N Motor Logic ---
+// reverse: 0 = Fwd, 1 = Rev, 2 = Brake
+void leftControl(int mode, float power) {
+    if (mode == 0) { // Forward
+        lO1 = 1; lO2 = 0;
+    } else if (mode == 1) { // Reverse
+        lO1 = 0; lO2 = 1;
+    } else { // Brake
+        lO1 = 0; lO2 = 0;
+    }
+    lEn.write(power);
+}
+
+void rightControl(int mode, float power) {
+    if (mode == 0) { // Forward
+        rO1 = 1; rO2 = 0;
+    } else if (mode == 1) { // Reverse
+        rO1 = 0; rO2 = 1;
+    } else { // Brake
+        rO1 = 0; rO2 = 0;
+    }
+    rEn.write(power);
+}
+
+int main() {
+    initialize();
+
+    while (true) {
+        // Read Sensors
+        int left = NlLine.read();
+        int center = CeLine.read();
+        int right = NrLine.read();
+
+        // --- NAVIGATION LOGIC ---
+        
+        if (center == 1) {
+            // ON TRACK: Move Forward
+            leftControl(0, drivePower);
+            rightControl(0, drivePower);
+            
+            LEDgreen = 0.0f; LEDred = 1.0f; LEDblue = 1.0f; // Green ON
+        } 
+        else if (right == 1) {
+            // DRIFTED LEFT: Turn Right (Pivot)
+            leftControl(0, turnPower); 
+            rightControl(1, turnPower); 
+            
+            LEDblue = 0.0f; LEDgreen = 1.0f; LEDred = 1.0f; // Blue ON
+        } 
+        else if (left == 1) {
+            // DRIFTED RIGHT: Turn Left (Pivot)
+            leftControl(1, turnPower);
+            rightControl(0, turnPower);
+            
+            LEDblue = 0.0f; LEDgreen = 1.0f; LEDred = 1.0f; // Blue ON
+        } 
+        else {
+            // LOST: Both motors slow search or stop
+            leftControl(2, 0); 
+            rightControl(2, 0);
+            
+            LEDred = 0.0f; LEDgreen = 1.0f; LEDblue = 1.0f; // Red ON
+        }
+
+        // Small delay for stability (10ms)
+        wait_us(10000);
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+//manual control
+
+#include "mbed.h"
+
+// ==========================================
+// PIN DEFINITIONS (Adjust to match your wiring)
+// ==========================================
+
+// Analog Inputs
+AnalogIn steerInput(PTB2);    // Steering: 0.0 (Left) to 0.5 (Center) to 1.0 (Right)
+AnalogIn throttleInput(PTB3); // Throttle: 0.0 (Reverse) to 0.5 (Center) to 1.0 (Forward)
+
+
+// ==========================================
+// CONSTANTS
+// ==========================================
+const float DEADBAND = 0.05f; // 5% deadband to ignore minor joystick jitter
+
+int main() {
+    // Set PWM frequency to 1kHz (prevents some motor whine)
+    enableLeft.period(0.001f);
+    enableRight.period(0.001f);
+
+    while (true) {
+        // 1. Read Analog Values (0.0 to 1.0)
+        float steerRaw = steerInput.read();
+        float throttleRaw = throttleInput.read();
+
+        // 2. Normalize inputs to a -1.0 to 1.0 range
+        // If raw is 0.5, normalized becomes 0.0.
+        float nSteer = (steerRaw - 0.5f) * 2.0f; 
+        float nThrottle = (throttleRaw - 0.5f) * 2.0f;
+
+        // Apply Deadband to prevent creeping when idle
+        if (abs(nSteer) < DEADBAND) nSteer = 0.0f;
+        if (abs(nThrottle) < DEADBAND) nThrottle = 0.0f;
+
+        // 3. Skid-Steer Mixing Algorithm
+        // Turning right (nSteer > 0) means the left motor spins faster forward 
+        // and the right motor spins slower (or in reverse).
+        float leftSpeed = nThrottle + nSteer;
+        float rightSpeed = nThrottle - nSteer;
+
+        // 4. Clamp speeds to strictly remain within the -1.0 to 1.0 range
+        if (leftSpeed > 1.0f) leftSpeed = 1.0f;
+        if (leftSpeed < -1.0f) leftSpeed = -1.0f;
+        if (rightSpeed > 1.0f) rightSpeed = 1.0f;
+        if (rightSpeed < -1.0f) rightSpeed = -1.0f;
+
+        // 5. Output to L298 Motor Driver
+        
+        // --- Drive Left Motor ---
+        if (leftSpeed >= 0.0f) {
+            // Forward
+            leftIn1 = 1;
+            leftIn2 = 0;
+            enableLeft.write(leftSpeed);
+        } else {
+            // Reverse
+            leftIn1 = 0;
+            leftIn2 = 1;
+            enableLeft.write(-leftSpeed); // PWM write expects a positive duty cycle (0.0 to 1.0)
+        }
+
+        // --- Drive Right Motor ---
+        if (rightSpeed >= 0.0f) {
+            // Forward
+            rightIn3 = 1;
+            rightIn4 = 0;
+            enableRight.write(rightSpeed);
+        } else {
+            // Reverse
+            rightIn3 = 0;
+            rightIn4 = 1;
+            enableRight.write(-rightSpeed); 
+        }
+
+        // Small delay to yield to the OS and prevent aggressive loop spinning
+        ThisThread::sleep_for(10ms);
+    }
+}
+
+
+
+
+
+
+#include "mbed.h"
+
+// --- Pin Assignments ---
+
+PwmOut LEDblue(LED_BLUE);
+PwmOut LEDred(LED_RED);
+PwmOut LEDgreen(LED_GREEN);
+
+// Right motor I/O (L298N: ENA, IN1, IN2)
+PwmOut rEn(PTE20);      
+DigitalOut rO1(PTE22);  // IN1
+DigitalOut rO2(PTE23);  // IN2
+
+// Left motor I/O (L298N: ENB, IN3, IN4)
+PwmOut lEn(PTE21);      
+DigitalOut lO1(PTE29);  // IN3
+DigitalOut lO2(PTE30);   // IN4
+
+// Line sensors (High = On Line)
+DigitalIn NlLine(PTB8); // Left
+DigitalIn CeLine(PTB9); // Center
+DigitalIn NrLine(PTB10); // Right
+
+// --- Settings ---
+float drivePower = 0.3f;  // Base speed (0.0 to 1.0)
+float turnPower = 0.3f;   // Speed during turns
+
+void initialize() {
+    lEn.period_ms(10);
+    rEn.period_ms(10);
+    // Reset LEDs (1.0 is OFF on many Mbed boards, 0.0 is OFF on others)
+    LEDblue = 1.0f; 
+    LEDred = 1.0f;
+    LEDgreen = 1.0f;
+}
+
+// --- L298N Motor Logic ---
+// reverse: 0 = Fwd, 1 = Rev, 2 = Brake
+void leftControl(int mode, float power) {
+    if (mode == 0) { // Forward
+        lO1 = 1; lO2 = 0;
+    } else if (mode == 1) { // Reverse
+        lO1 = 0; lO2 = 1;
+    } else { // Brake
+        lO1 = 0; lO2 = 0;
+    }
+    lEn.write(power);
+}
+
+void rightControl(int mode, float power) {
+    if (mode == 0) { // Forward
+        rO1 = 1; rO2 = 0;
+    } else if (mode == 1) { // Reverse
+        rO1 = 0; rO2 = 1;
+    } else { // Brake
+        rO1 = 0; rO2 = 0;
+    }
+    rEn.write(power);
+}
+
+int main() {
+    initialize();
+
+    while (true) {
+        // Read Sensors
+        int left = NlLine.read();
+        int center = CeLine.read();
+        int right = NrLine.read();
+
+        // --- NAVIGATION LOGIC ---
+         
+        if (right == 1 && center == 0) {
+            // DRIFTED LEFT: Turn Right (Pivot)
+            leftControl(0, turnPower); 
+            rightControl(1, turnPower); 
+            
+            LEDblue = 0.0f; LEDgreen = 1.0f; LEDred = 1.0f; // Blue ON
+        } 
+        else if (left == 1 && center == 0) {
+            // DRIFTED RIGHT: Turn Left (Pivot)
+            leftControl(1, turnPower);
+            rightControl(0, turnPower);
+            
+            LEDblue = 0.0f; LEDgreen = 1.0f; LEDred = 1.0f; // Blue ON
+        } else if (center == 1) {
+            // ON TRACK: Move Forward
+            leftControl(0, drivePower);
+            rightControl(0, drivePower);
+            
+            LEDgreen = 0.0f; LEDred = 1.0f; LEDblue = 1.0f; // Green ON
+        }else {
+            // LOST: Both motors slow search or stop
+            leftControl(2, 0); 
+            rightControl(2, 0);
+            
+            LEDred = 0.0f; LEDgreen = 1.0f; LEDblue = 1.0f; // Red ON
+        }
+
+        // Small delay for stability (10ms)
+        wait_us(5000);
+    }
+}
+
+
+
+// NOT WORKING :(
+
+#include "mbed.h"
+
+// --- Pin Assignments ---
+PwmOut LEDblue(LED_BLUE);
+PwmOut LEDred(LED_RED);
+PwmOut LEDgreen(LED_GREEN);
+
+// Right motor I/O (L298N: ENA, IN1, IN2)
+PwmOut rEn(PTE21);
+DigitalOut rO1(PTE29);  // IN1
+DigitalOut rO2(PTE30);  // IN2
+
+// Left motor I/O (L298N: ENB, IN3, IN4)
+PwmOut lEn(PTE20);
+DigitalOut lO1(PTE22);  // IN3
+DigitalOut lO2(PTE23);  // IN4
+
+// Line sensors (High = On Line)
+DigitalIn NlLine(PTB8);   // Left
+DigitalIn CeLine(PTB9);   // Center
+DigitalIn NrLine(PTB10);  // Right
+InterruptIn Flline(PTD6); // Far Left
+InterruptIn Frline(PTD7); // Far Right
+
+// --- Manual Control Inputs ---
+DigitalIn manualEnable(PTD2); // HIGH = Manual Mode
+AnalogIn steerInput(PTB2);    // Steering:  0.0 (Left) → 0.5 (Centre) → 1.0 (Right)
+AnalogIn throttleInput(PTB3); // Throttle:  0.0 (Reverse) → 0.5 (Centre) → 1.0 (Forward)
+
+// --- Settings ---
+float drivePower = 0.35f;
+float turnPower  = 1.0f;
+const float DEADBAND = 0.05f;
+
+// --- Shared mode flag (volatile: written in ISR context indirectly) ---
+volatile bool inManualMode = false;
+
+// ============================================================
+// Helpers
+// ============================================================
+void initialize() {
+    lEn.period_ms(10);
+    rEn.period_ms(10);
+    LEDblue  = 1.0f;
+    LEDred   = 1.0f;
+    LEDgreen = 1.0f;
+}
+
+// mode: 0 = Fwd, 1 = Rev, 2 = Brake
+void leftControl(int mode, float power) {
+    if      (mode == 0) { lO1 = 1; lO2 = 0; }
+    else if (mode == 1) { lO1 = 0; lO2 = 1; }
+    else                { lO1 = 0; lO2 = 0; }
+    lEn.write(power);
+}
+
+void rightControl(int mode, float power) {
+    if      (mode == 0) { rO1 = 1; rO2 = 0; }
+    else if (mode == 1) { rO1 = 0; rO2 = 1; }
+    else                { rO1 = 0; rO2 = 0; }
+    rEn.write(power);
+}
+
+// ============================================================
+// Manual control — one update tick
+// ============================================================
+void runManual() {
+    float nSteer    = (steerInput.read()    - 0.5f) * 2.0f;
+    float nThrottle = (throttleInput.read() - 0.5f) * 2.0f;
+
+    if (fabsf(nSteer)    < DEADBAND) nSteer    = 0.0f;
+    if (fabsf(nThrottle) < DEADBAND) nThrottle = 0.0f;
+
+    float leftSpeed  = nThrottle + nSteer;
+    float rightSpeed = nThrottle - nSteer;
+
+    // Clamp
+    if (leftSpeed  >  1.0f) leftSpeed  =  1.0f;
+    if (leftSpeed  < -1.0f) leftSpeed  = -1.0f;
+    if (rightSpeed >  1.0f) rightSpeed =  1.0f;
+    if (rightSpeed < -1.0f) rightSpeed = -1.0f;
+
+    leftControl (leftSpeed  >= 0.0f ? 0 : 1, fabsf(leftSpeed));
+    rightControl(rightSpeed >= 0.0f ? 0 : 1, fabsf(rightSpeed));
+
+    // Cyan LED = manual mode
+    LEDred = 1.0f; LEDgreen = 0.0f; LEDblue = 0.0f;
+}
+
+// ============================================================
+// Main
+// ============================================================
+int main() {
+    initialize();
+
+    // --- Far-sensor ISRs (only act when in autonomous mode) ---
+    Flline.rise([]() {
+        if (inManualMode) return;   // <-- ignore in manual mode
+        bool rejoined = false;
+        while (!rejoined) {
+            LEDred = 0.0f; LEDgreen = 0.0f; LEDblue = 0.0f; // White
+            leftControl(1, 0.5f);
+            rightControl(0, 0.5f);
+            wait_us(1000);
+            leftControl(0, 0);
+            rightControl(0, 0);
+            if (NlLine || CeLine || NrLine) rejoined = true;
+        }
+    });
+
+    Frline.rise([]() {
+        if (inManualMode) return;   // <-- ignore in manual mode
+        bool rejoined = false;
+        while (!rejoined) {
+            LEDred = 0.0f; LEDgreen = 0.0f; LEDblue = 0.0f; // White
+            leftControl(0, 0.5f);
+            rightControl(1, 0.5f);
+            wait_us(1000);
+            leftControl(0, 0);
+            rightControl(0, 0);
+            if (NlLine || CeLine || NrLine) rejoined = true;
+        }
+    });
+
+    while (true) {
+        inManualMode = (manualEnable.read() == 1);
+
+        // ── MANUAL MODE ──────────────────────────────────────
+        if (inManualMode) {
+            runManual();
+            wait_us(10000); // 10 ms
+            continue;
+        }
+
+        // ── AUTONOMOUS LINE-FOLLOWING MODE ───────────────────
+        int left   = NlLine.read();
+        int center = CeLine.read();
+        int right  = NrLine.read();
+
+        if (center == 1) {
+            leftControl(0, drivePower);
+            rightControl(0, drivePower);
+            // Keep driving until a side sensor fires or mode changes
+            while (!left && !right && !inManualMode) {
+                wait_us(10000);
+                left  = NlLine.read();
+                right = NrLine.read();
+                inManualMode = (manualEnable.read() == 1);
+            }
+            LEDgreen = 0.0f; LEDred = 1.0f; LEDblue = 1.0f; // Green
+        }
+        else if (right == 1) {
+            // Drifted left → turn right
+            leftControl(0, turnPower);
+            rightControl(1, turnPower);
+            LEDblue = 0.0f; LEDgreen = 1.0f; LEDred = 1.0f; // Blue
+        }
+        else if (left == 1) {
+            // Drifted right → turn left
+            leftControl(1, turnPower);
+            rightControl(0, turnPower);
+            LEDblue = 0.0f; LEDgreen = 1.0f; LEDred = 1.0f; // Blue
+        }
+        else {
+            // Lost — slow search spin
+            leftControl(0, 0.25f);
+            rightControl(1, 0.25f);
+            LEDred = 0.0f; LEDgreen = 1.0f; LEDblue = 1.0f; // Red
+        }
+
+        wait_us(10000); // 10 ms
+    }
+}

@@ -1,0 +1,23 @@
+%TF.GenerationSoftware,KiCad,Pcbnew,9.0.4*%
+%TF.CreationDate,2026-03-10T18:05:46+00:00*%
+%TF.ProjectId,TDP3 VOLTAGE REG w BUCK,54445033-2056-44f4-9c54-414745205245,rev?*%
+%TF.SameCoordinates,Original*%
+%TF.FileFunction,Profile,NP*%
+%FSLAX46Y46*%
+G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
+G04 Created by KiCad (PCBNEW 9.0.4) date 2026-03-10 18:05:46*
+%MOMM*%
+%LPD*%
+G01*
+G04 APERTURE LIST*
+%TA.AperFunction,Profile*%
+%ADD10C,0.050000*%
+%TD*%
+G04 APERTURE END LIST*
+D10*
+X19900000Y-19800000D02*
+X105400000Y-19800000D01*
+X105400000Y-84800000D01*
+X19900000Y-84800000D01*
+X19900000Y-19800000D01*
+M02*

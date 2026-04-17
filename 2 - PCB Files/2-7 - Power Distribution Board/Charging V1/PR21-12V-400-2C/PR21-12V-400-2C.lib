@@ -1,0 +1,29 @@
+EESchema-LIBRARY Version 2.3
+#encoding utf-8
+#SamacSys ECAD Model PR21-12V-400-2C
+#/17171540/1813005/2.50/8/2/Relay or Contactor
+DEF PR21-12V-400-2C K 0 30 Y Y 1 F N
+F0 "K" 1150 300 50 H V L CNN
+F1 "PR21-12V-400-2C" 1150 200 50 H V L CNN
+F2 "PR2112V4002C" 1150 100 50 H I L CNN
+F3 "https://www.sameskydevices.com/product/resource/PR21-12V-400-2C.pdf" 1150 0 50 H I L CNN
+F4 "PR21-12V-400-2C - 29 x 12.6 x 15.8 mm, 12 V, 8 A, DPDT (2 Form C), Power Relay" 1150 -100 50 H I L CNN "Description"
+F5 "16.1" 1150 -200 50 H I L CNN "Height"
+F6 "" 1150 -300 50 H I L CNN "Farnell Part Number"
+F7 "" 1150 -400 50 H I L CNN "Farnell Price/Stock"
+F8 "Same Sky" 1150 -500 50 H I L CNN "Manufacturer_Name"
+F9 "PR21-12V-400-2C" 1150 -600 50 H I L CNN "Manufacturer_Part_Number"
+DRAW
+X COIL_1 1 0 0 200 R 50 50 0 0 P
+X NC_1 4 0 -100 200 R 50 50 0 0 P
+X COM_1 5 0 -200 200 R 50 50 0 0 P
+X NO_1 6 0 -300 200 R 50 50 0 0 P
+X NO_2 7 1300 -300 200 L 50 50 0 0 P
+X COM_2 8 1300 -200 200 L 50 50 0 0 P
+X NC_2 9 1300 -100 200 L 50 50 0 0 P
+X COIL_2 12 1300 0 200 L 50 50 0 0 P
+P 5 0 1 6 200 100 1100 100 1100 -400 200 -400 200 100 N
+ENDDRAW
+ENDDEF
+#
+#End Library

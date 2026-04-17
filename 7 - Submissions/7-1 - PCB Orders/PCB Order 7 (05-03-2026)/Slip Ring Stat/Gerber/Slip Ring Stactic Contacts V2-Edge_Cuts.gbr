@@ -1,0 +1,23 @@
+%TF.GenerationSoftware,KiCad,Pcbnew,9.0.4*%
+%TF.CreationDate,2026-03-05T01:51:45+00:00*%
+%TF.ProjectId,Slip Ring Stactic Contacts V2,536c6970-2052-4696-9e67-205374616374,rev?*%
+%TF.SameCoordinates,Original*%
+%TF.FileFunction,Profile,NP*%
+%FSLAX46Y46*%
+G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
+G04 Created by KiCad (PCBNEW 9.0.4) date 2026-03-05 01:51:45*
+%MOMM*%
+%LPD*%
+G01*
+G04 APERTURE LIST*
+%TA.AperFunction,Profile*%
+%ADD10C,0.050000*%
+%TD*%
+G04 APERTURE END LIST*
+D10*
+X33000000Y-15000000D02*
+X69500000Y-15000000D01*
+X69500000Y-45500000D01*
+X33000000Y-45500000D01*
+X33000000Y-15000000D01*
+M02*

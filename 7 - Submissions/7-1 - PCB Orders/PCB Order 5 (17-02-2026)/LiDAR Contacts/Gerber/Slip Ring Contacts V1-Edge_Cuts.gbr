@@ -1,0 +1,23 @@
+%TF.GenerationSoftware,KiCad,Pcbnew,9.0.4*%
+%TF.CreationDate,2026-02-17T14:01:31+00:00*%
+%TF.ProjectId,Slip Ring Contacts V1,536c6970-2052-4696-9e67-20436f6e7461,rev?*%
+%TF.SameCoordinates,Original*%
+%TF.FileFunction,Profile,NP*%
+%FSLAX46Y46*%
+G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
+G04 Created by KiCad (PCBNEW 9.0.4) date 2026-02-17 14:01:31*
+%MOMM*%
+%LPD*%
+G01*
+G04 APERTURE LIST*
+%TA.AperFunction,Profile*%
+%ADD10C,0.050000*%
+%TD*%
+G04 APERTURE END LIST*
+D10*
+X39000000Y-27500000D02*
+X56000000Y-27500000D01*
+X56000000Y-52000000D01*
+X39000000Y-52000000D01*
+X39000000Y-27500000D01*
+M02*

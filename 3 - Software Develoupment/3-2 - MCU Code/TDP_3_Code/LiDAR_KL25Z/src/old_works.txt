@@ -1,0 +1,129 @@
+#include "mbed.h"
+#include <cstring>
+
+
+I2C i2c(PTC2, PTC1); 
+PwmOut test(PTB3);
+
+PwmOut led_red(LED_RED);
+PwmOut led_green(LED_GREEN);
+PwmOut led_blue(LED_BLUE);
+
+
+static BufferedSerial pc(USBTX, USBRX, 115200);
+
+static void print_line(const char *s) {
+    pc.write(s, strlen(s));
+}
+
+
+void set_rgb(float r, float g, float b) {
+    led_red = 1.0f - r;
+    led_green = 1.0f - g;
+    led_blue = 1.0f - b;
+}
+
+int main() {
+    
+    i2c.frequency(100000);
+
+    led_red.period(0.0001f);
+
+    int addr_8bit = (0x71 << 1); 
+    char data = 0x1F;
+
+
+    test.period(0.001);
+    test.write(0.5f);
+
+    // Optional but recommended: make stdout non-buffered
+    setvbuf(stdout, NULL, _IONBF, 0);
+
+    print_line("\r\n=== KL25Z Serial Monitor Test ===\r\n");
+
+    int counter = 0;
+    char buffer[64];
+
+    
+    while (true) {
+        
+        i2c.write(addr_8bit, &data, 1);
+        set_rgb(1.0, 0.0, 0.0);
+        ThisThread::sleep_for(500ms);
+
+        i2c.write(addr_8bit, &data, 1);
+        set_rgb(0.0, 1.0, 0.0);
+        ThisThread::sleep_for(500ms);
+
+        i2c.write(addr_8bit, &data, 1);
+        set_rgb(0.0, 0.0, 1.0);
+        ThisThread::sleep_for(500ms);
+        
+        int len = snprintf(buffer, sizeof(buffer),
+                            "Counter: %d\r\n", counter++);
+        pc.write(buffer, len);
+
+        ThisThread::sleep_for(1s);
+    }
+}
+
+
+
+
+#include "mbed.h"
+
+// Hardware Pin Assignments
+I2C i2c(PTC2, PTC1);         // SDA, SCL
+DigitalOut en(PTE4);         // Sensor Enable pin
+PwmOut led_r(LED_RED);       // RGB Red (Active Low)
+PwmOut led_g(LED_GREEN);     // RGB Green (Active Low)
+PwmOut pwm_out(PTE5);       // Variable frequency PWM
+
+const int ADDR = 0x41 << 1;  // TMF8806 I2C Address [cite: 764]
+
+void write(uint8_t reg, uint8_t val) {
+    char data[] = {reg, val};
+    i2c.write(ADDR, data, 2);
+}
+
+int main() {
+    // 1. HARDWARE STARTUP [cite: 435, 463]
+    en = 0; ThisThread::sleep_for(10ms);
+    en = 1; ThisThread::sleep_for(2ms); // Wait for I2C to be ready
+
+    // 2. BOOTLOADER -> APP TRANSITION [cite: 450, 884]
+    write(0xE0, 0x01); // Wake up oscillator (PON=1) [cite: 892]
+    ThisThread::sleep_for(5ms);
+    write(0x02, 0xC0); // Request Measurement App 
+    ThisThread::sleep_for(5ms);
+
+    // 3. START MEASUREMENT [cite: 478, 942]
+    // Starts 2.5m mode continuous ranging [cite: 569, 996]
+    char start[] = {0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x1E, 0x84, 0x02};
+    i2c.write(ADDR, start, 11);
+
+    while (true) {
+        char res[33];
+        char reg = 0x1D; // Read result registers starting at 0x1D [cite: 482, 1122]
+        i2c.write(ADDR, &reg, 1, true);
+        i2c.read(ADDR, res, 33);
+
+        // Extract distance (mm) from registers 0x22 and 0x23 
+        uint16_t dist = (res[6] << 8) | res[5];
+
+        if (dist > 0) {
+            // LED: Green if far (>1m), Red if close (<1m)
+            led_r = (dist < 1000) ? 0.0f : 1.0f; 
+            led_g = (dist >= 1000) ? 0.0f : 1.0f;
+
+            // PWM: Vary period based on distance (closer = faster freq)
+            pwm_out.period_ms(5 + (dist / 100)); // Period between 5ms and 55ms
+            pwm_out = 0.5f; 
+            
+            printf("Distance: %u mm\n", dist);
+        }
+
+        write(0xE1, 0x01); // Clear interrupt flag [cite: 898]
+        ThisThread::sleep_for(300ms); // 300ms = ~200 times per minute
+    }
+}

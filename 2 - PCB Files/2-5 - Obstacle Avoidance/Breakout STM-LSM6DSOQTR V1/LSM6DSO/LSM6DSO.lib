@@ -1,0 +1,37 @@
+EESchema-LIBRARY Version 2.3
+#encoding utf-8
+#SamacSys ECAD Model LSM6DSO
+#/16630424/1813005/2.50/14/3/Accelerometer
+DEF LSM6DSO AC 0 30 Y Y 1 F N
+F0 "AC" 1450 600 50 H V L CNN
+F1 "LSM6DSO" 1450 500 50 H V L CNN
+F2 "LSM6DSO" 1450 400 50 H I L CNN
+F3 "https://www.st.com/en/mems-and-sensors/lsm6dso.html" 1450 300 50 H I L CNN
+F4 "IMUs - Inertial Measurement Units iNEMO inertial module: 3D accelerometer and 3D gyroscope" 1450 200 50 H I L CNN "Description"
+F5 "0.86" 1450 100 50 H I L CNN "Height"
+F6 "STMicroelectronics" 1450 0 50 H I L CNN "Manufacturer_Name"
+F7 "LSM6DSO" 1450 -100 50 H I L CNN "Manufacturer_Part_Number"
+F8 "N/A" 1450 -200 50 H I L CNN "Mouser Part Number"
+F9 "https://www.mouser.co.uk/ProductDetail/STMicroelectronics/LSM6DSO?qs=lc2O%252BfHJPVaWmEJZZeO%252B0w%3D%3D" 1450 -300 50 H I L CNN "Mouser Price/Stock"
+F10 "" 1450 -400 50 H I L CNN "Arrow Part Number"
+F11 "" 1450 -500 50 H I L CNN "Arrow Price/Stock"
+DRAW
+X SDO/SA0 1 0 0 200 R 50 50 0 0 P
+X SDX 2 0 -100 200 R 50 50 0 0 P
+X SCX 3 0 -200 200 R 50 50 0 0 P
+X INT1_ 4 0 -300 200 R 50 50 0 0 P
+X VDDIO 5 700 -1000 200 U 50 50 0 0 P
+X GND_1 6 800 -1000 200 U 50 50 0 0 P
+X GND_2 7 900 -1000 200 U 50 50 0 0 P
+X VDD 8 1600 -300 200 L 50 50 0 0 P
+X INT2 9 1600 -200 200 L 50 50 0 0 P
+X OCS_AUX 10 1600 -100 200 L 50 50 0 0 P
+X SDO_AUX_ 11 1600 0 200 L 50 50 0 0 P
+X CS 12 900 600 200 D 50 50 0 0 P
+X SCL 13 800 600 200 D 50 50 0 0 P
+X SDA 14 700 600 200 D 50 50 0 0 P
+P 5 0 1 6 200 400 1400 400 1400 -800 200 -800 200 400 N
+ENDDRAW
+ENDDEF
+#
+#End Library
